@@ -10,6 +10,7 @@ from models.model_manager import (
     load_model,
     unload_model,
     device,
+    AVAILABLE_MODELS,
 )
 
 from utils.preprocess import preprocess_image
@@ -43,17 +44,6 @@ os.makedirs(
     OUTPUT_FOLDER,
     exist_ok=True
 )
-
-
-# ============================================================
-# AVAILABLE MODELS
-# ============================================================
-
-AVAILABLE_MODELS = [
-    "unet",
-    "residual_unet",
-    "unetplusplus"
-]
 
 
 # ============================================================
@@ -95,12 +85,16 @@ async def predict(
         )
 
     # --------------------------------------------------------
-    # Save uploaded image
+    # Save image
     # --------------------------------------------------------
+
+    safe_filename = os.path.basename(
+        file.filename
+    )
 
     image_path = os.path.join(
         UPLOAD_FOLDER,
-        file.filename
+        safe_filename
     )
 
     with open(
@@ -112,17 +106,17 @@ async def predict(
             await file.read()
         )
 
-    # --------------------------------------------------------
-    # Preprocess
-    # --------------------------------------------------------
-
-    image = preprocess_image(
-        image_path
-    ).to(device)
-
     selected_model = None
 
     try:
+
+        # ----------------------------------------------------
+        # Preprocess
+        # ----------------------------------------------------
+
+        image = preprocess_image(
+            image_path
+        ).to(device)
 
         # ----------------------------------------------------
         # Load ONLY requested model
@@ -137,6 +131,7 @@ async def predict(
         # ----------------------------------------------------
 
         if device.type == "cuda":
+
             torch.cuda.synchronize()
 
         start_time = time.time()
@@ -152,6 +147,7 @@ async def predict(
             )
 
         if device.type == "cuda":
+
             torch.cuda.synchronize()
 
         inference_time = (
@@ -162,14 +158,18 @@ async def predict(
         # Move output to CPU
         # ----------------------------------------------------
 
-        output = output.detach().cpu()
+        output = (
+            output
+            .detach()
+            .cpu()
+        )
 
         # ----------------------------------------------------
         # Save mask
         # ----------------------------------------------------
 
         mask_name = (
-            f"{model_name}_{file.filename}"
+            f"{model_name}_{safe_filename}"
         )
 
         mask_path = os.path.join(
@@ -187,7 +187,7 @@ async def predict(
         # ----------------------------------------------------
 
         overlay_name = (
-            f"overlay_{model_name}_{file.filename}"
+            f"overlay_{model_name}_{safe_filename}"
         )
 
         overlay_path = os.path.join(
@@ -248,7 +248,7 @@ async def predict(
 
                 "model": model_name,
 
-                "filename": file.filename,
+                "filename": safe_filename,
 
                 "mask_file": mask_name,
 
@@ -271,16 +271,31 @@ async def predict(
             }
         )
 
+    except Exception as e:
+
+        print(
+            f"Prediction error: {e}"
+        )
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "message": str(e)
+            }
+        )
+
     finally:
 
         # ----------------------------------------------------
-        # VERY IMPORTANT
-        # Release model after prediction
+        # CRITICAL FOR RENDER FREE
         # ----------------------------------------------------
 
-        unload_model(
-            selected_model
-        )
+        if selected_model is not None:
+
+            unload_model(
+                selected_model
+            )
 
         selected_model = None
 
@@ -297,12 +312,21 @@ async def compare_models(
 ):
 
     # --------------------------------------------------------
-    # Save uploaded image
+    # On Render Free:
+    # AVAILABLE_MODELS = ["unetplusplus"]
+    #
+    # Locally:
+    # AVAILABLE_MODELS =
+    # ["unet", "residual_unet", "unetplusplus"]
     # --------------------------------------------------------
+
+    safe_filename = os.path.basename(
+        file.filename
+    )
 
     image_path = os.path.join(
         UPLOAD_FOLDER,
-        file.filename
+        safe_filename
     )
 
     with open(
@@ -313,10 +337,6 @@ async def compare_models(
         f.write(
             await file.read()
         )
-
-    # --------------------------------------------------------
-    # Preprocess ONCE
-    # --------------------------------------------------------
 
     image = preprocess_image(
         image_path
@@ -334,39 +354,30 @@ async def compare_models(
 
         try:
 
-            # ------------------------------------------------
-            # Load ONLY this model
-            # ------------------------------------------------
-
             print()
-            print(
-                "=" * 60
-            )
-
+            print("=" * 60)
             print(
                 f"Running model: {model_name}"
             )
+            print("=" * 60)
 
-            print(
-                "=" * 60
-            )
+            # ------------------------------------------------
+            # Load ONLY current model
+            # ------------------------------------------------
 
             selected_model = load_model(
                 model_name
             )
 
             # ------------------------------------------------
-            # Start timer
+            # Prediction
             # ------------------------------------------------
 
             if device.type == "cuda":
+
                 torch.cuda.synchronize()
 
             start_time = time.time()
-
-            # ------------------------------------------------
-            # Prediction
-            # ------------------------------------------------
 
             with torch.no_grad():
 
@@ -379,6 +390,7 @@ async def compare_models(
                 )
 
             if device.type == "cuda":
+
                 torch.cuda.synchronize()
 
             inference_time = (
@@ -387,9 +399,6 @@ async def compare_models(
 
             # ------------------------------------------------
             # Move output to CPU
-            #
-            # This is important because the model will
-            # immediately be unloaded.
             # ------------------------------------------------
 
             output = (
@@ -403,7 +412,7 @@ async def compare_models(
             # ------------------------------------------------
 
             mask_name = (
-                f"{model_name}_{file.filename}"
+                f"{model_name}_{safe_filename}"
             )
 
             mask_path = os.path.join(
@@ -417,11 +426,11 @@ async def compare_models(
             )
 
             # ------------------------------------------------
-            # Create overlay
+            # Overlay
             # ------------------------------------------------
 
             overlay_name = (
-                f"overlay_{model_name}_{file.filename}"
+                f"overlay_{model_name}_{safe_filename}"
             )
 
             overlay_path = os.path.join(
@@ -436,7 +445,7 @@ async def compare_models(
             )
 
             # ------------------------------------------------
-            # Calculate tumor area
+            # Tumor area
             # ------------------------------------------------
 
             mask = (
@@ -457,7 +466,7 @@ async def compare_models(
             ) * 100
 
             # ------------------------------------------------
-            # Calculate confidence
+            # Confidence
             # ------------------------------------------------
 
             if tumor_pixels > 0:
@@ -510,10 +519,6 @@ async def compare_models(
 
         except Exception as e:
 
-            # ------------------------------------------------
-            # Don't stop comparison if one model fails
-            # ------------------------------------------------
-
             comparison_results[
                 model_name
             ] = {
@@ -533,30 +538,33 @@ async def compare_models(
 
             # ------------------------------------------------
             # CRITICAL:
-            # Release model BEFORE loading next model
+            # Free model before next one
             # ------------------------------------------------
 
-            unload_model(
-                selected_model
-            )
+            if selected_model is not None:
+
+                unload_model(
+                    selected_model
+                )
 
             selected_model = None
 
             cleanup_memory()
 
             print(
-                f"✓ Memory cleaned after {model_name}"
+                f"✓ Memory cleaned after "
+                f"{model_name}"
             )
 
     # ========================================================
-    # RETURN COMPARISON
+    # RETURN
     # ========================================================
 
     return JSONResponse(
         {
             "status": "success",
 
-            "filename": file.filename,
+            "filename": safe_filename,
 
             "models": comparison_results
         }
