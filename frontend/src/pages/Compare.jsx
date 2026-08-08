@@ -1,18 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import API from "../services/api";
 
-import {
-  BarChart,
-  Bar,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
-
-const BACKEND_URL = "http://127.0.0.1:8000";
+const BACKEND_URL =
+  "https://brain-tumor-mri-segmentation.onrender.com";
 
 function Compare() {
   const [file, setFile] = useState(null);
@@ -21,29 +11,17 @@ function Compare() {
   const [previewUrl, setPreviewUrl] = useState(null);
 
   // =========================================================
-  // MODELS
+  // MODEL
   // =========================================================
 
-  const models = [
-    {
-      key: "unet",
-      name: "UNet",
-      color: "#7c8cf7",
-    },
-    {
-      key: "residual_unet",
-      name: "Residual UNet",
-      color: "#c98cf0",
-    },
-    {
-      key: "unetplusplus",
-      name: "UNet++",
-      color: "#33d6a0",
-    },
-  ];
+  const model = {
+    key: "unetplusplus",
+    name: "UNet++",
+    color: "#33d6a0",
+  };
 
   // =========================================================
-  // FILE CHANGE
+  // FILE SELECTION
   // =========================================================
 
   const handleFileChange = (event) => {
@@ -56,10 +34,12 @@ function Compare() {
       return;
     }
 
-    setFile(selectedFile);
+    // Revoke previous preview
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
 
-    // Important:
-    // Selecting a NEW MRI clears the previous analysis.
+    setFile(selectedFile);
     setResult(null);
 
     const url = URL.createObjectURL(selectedFile);
@@ -67,7 +47,7 @@ function Compare() {
   };
 
   // =========================================================
-  // CLEANUP IMAGE URL
+  // CLEANUP
   // =========================================================
 
   useEffect(() => {
@@ -77,56 +57,6 @@ function Compare() {
       }
     };
   }, [previewUrl]);
-
-  // =========================================================
-  // DOWNLOAD IMAGE
-  // =========================================================
-
-  const downloadImage = async (url, filename) => {
-    if (!url) {
-      alert("Image is not available.");
-      return;
-    }
-
-    try {
-      const response = await fetch(url);
-
-      if (!response.ok) {
-        throw new Error(
-          `Download failed: ${response.status}`
-        );
-      }
-
-      const blob = await response.blob();
-
-      const blobUrl =
-        window.URL.createObjectURL(blob);
-
-      const link =
-        document.createElement("a");
-
-      link.href = blobUrl;
-      link.download = filename;
-
-      document.body.appendChild(link);
-
-      link.click();
-
-      link.remove();
-
-      window.URL.revokeObjectURL(blobUrl);
-
-    } catch (error) {
-      console.error(
-        "Download failed:",
-        error
-      );
-
-      alert(
-        "Unable to download the image."
-      );
-    }
-  };
 
   // =========================================================
   // ANALYZE MRI
@@ -140,27 +70,31 @@ function Compare() {
 
     try {
       setLoading(true);
-
-      // IMPORTANT:
-      // Hide old results while new analysis is running.
       setResult(null);
 
       const formData = new FormData();
 
       formData.append("file", file);
 
-      console.log(
-        "Sending MRI:",
-        file.name
-      );
+      console.log("Sending MRI:", file.name);
+
+      // =====================================================
+      // RENDER BACKEND
+      // UNet++ ONLY
+      // =====================================================
 
       const response = await API.post(
-        "/predict/compare",
-        formData
+        "/predict/",
+        formData,
+        {
+          params: {
+            model_name: "unetplusplus",
+          },
+        }
       );
 
       console.log(
-        "COMPARE RESPONSE:",
+        "PREDICTION RESPONSE:",
         response.data
       );
 
@@ -168,7 +102,7 @@ function Compare() {
 
     } catch (error) {
       console.error(
-        "Comparison failed:",
+        "Prediction failed:",
         error
       );
 
@@ -184,37 +118,20 @@ function Compare() {
         );
       }
 
+      if (error.request) {
+        console.error(
+          "No response received from backend:",
+          error.request
+        );
+      }
+
       alert(
-        "Model comparison failed. Check the browser console."
+        "Prediction failed. Check the backend logs."
       );
 
     } finally {
       setLoading(false);
     }
-  };
-
-  // =========================================================
-  // NORMALIZE RESULT
-  // =========================================================
-
-  const modelData = useMemo(() => {
-    if (!result) {
-      return {};
-    }
-
-    return result.models ?? result;
-  }, [result]);
-
-  // =========================================================
-  // GET MODEL RESULT
-  // =========================================================
-
-  const getModelResult = (key) => {
-    if (!result) {
-      return null;
-    }
-
-    return modelData?.[key] ?? null;
   };
 
   // =========================================================
@@ -230,41 +147,32 @@ function Compare() {
   };
 
   // =========================================================
-  // CHART DATA
+  // SAFE NUMBER
   // =========================================================
 
-  const chartData = useMemo(() => {
-    if (!result) {
-      return [];
-    }
+  const getNumber = (value, fallback = 0) => {
+    const number = Number(value);
 
-    return models.map((model) => {
-      const data =
-        modelData?.[model.key];
+    return Number.isFinite(number)
+      ? number
+      : fallback;
+  };
 
-      return {
-        model: model.name,
+  // =========================================================
+  // RESULT VALUES
+  // =========================================================
 
-        tumorArea: Number(
-          data?.tumor_percentage ?? 0
-        ),
+  const tumorPercentage = getNumber(
+    result?.tumor_percentage
+  );
 
-        confidence: Number(
-          (
-            Number(
-              data?.confidence ?? 0
-            ) * 100
-          ).toFixed(2)
-        ),
+  const confidence = getNumber(
+    result?.confidence
+  );
 
-        inferenceTime: Number(
-          data?.inference_time_ms ?? 0
-        ),
-
-        color: model.color,
-      };
-    });
-  }, [result, modelData]);
+  const inferenceTime = getNumber(
+    result?.inference_time_ms
+  );
 
   // =========================================================
   // RENDER
@@ -284,9 +192,9 @@ function Compare() {
         "
       >
 
-        {/* =====================================================
-            COMPARE MODELS / UPLOAD
-        ===================================================== */}
+        {/* ===================================================
+            UPLOAD SECTION
+        =================================================== */}
 
         <section
           className="
@@ -307,7 +215,7 @@ function Compare() {
               mb-6
             "
           >
-            Compare Models
+            Upload MRI Scan
           </h2>
 
 
@@ -320,7 +228,9 @@ function Compare() {
             "
           >
 
-            {/* MRI */}
+            {/* =================================================
+                MRI IMAGE
+            ================================================= */}
 
             <div>
 
@@ -335,6 +245,7 @@ function Compare() {
               >
                 MRI Image
               </label>
+
 
               <div
                 className="
@@ -368,8 +279,6 @@ function Compare() {
                     hover:file:bg-[#2ad9c2]/10
 
                     focus:outline-none
-                    focus-visible:ring-2
-                    focus-visible:ring-[#2ad9c2]
                   "
                 />
 
@@ -391,7 +300,9 @@ function Compare() {
             </div>
 
 
-            {/* MODELS */}
+            {/* =================================================
+                MODEL
+            ================================================= */}
 
             <div>
 
@@ -404,8 +315,9 @@ function Compare() {
                   mb-2
                 "
               >
-                Models
+                Model
               </label>
+
 
               <div
                 className="
@@ -417,38 +329,27 @@ function Compare() {
                 "
               >
 
-                <div
+                <span
                   className="
-                    flex
-                    flex-wrap
-                    gap-2
+                    inline-block
+                    px-3
+                    py-1
+                    rounded-full
+                    text-xs
+                    font-semibold
+                    border
                   "
+                  style={{
+                    color: model.color,
+                    borderColor:
+                      `${model.color}66`,
+                    backgroundColor:
+                      `${model.color}12`,
+                  }}
                 >
+                  UNet++
+                </span>
 
-                  {models.map((model) => (
-                    <span
-                      key={model.key}
-                      className="
-                        px-3
-                        py-1
-                        rounded-full
-                        text-xs
-                        font-semibold
-                        border
-                      "
-                      style={{
-                        color: model.color,
-                        borderColor:
-                          `${model.color}66`,
-                        backgroundColor:
-                          `${model.color}12`,
-                      }}
-                    >
-                      {model.name}
-                    </span>
-                  ))}
-
-                </div>
 
                 <p
                   className="
@@ -457,7 +358,7 @@ function Compare() {
                     mt-3
                   "
                 >
-                  All three models will analyze the MRI.
+                  UNet++ will analyze the MRI.
                 </p>
 
               </div>
@@ -467,12 +368,14 @@ function Compare() {
           </div>
 
 
-          {/* ANALYZE */}
+          {/* =================================================
+              ANALYZE BUTTON
+          ================================================= */}
 
           <button
             type="button"
             onClick={handleAnalyze}
-            disabled={loading}
+            disabled={loading || !file}
             className="
               mt-6
               px-6
@@ -497,18 +400,20 @@ function Compare() {
               focus-visible:ring-[#2ad9c2]
             "
           >
+
             {loading
-              ? "Analyzing..."
-              : "Analyze MRI"}
+              ? "Analyzing UNet++..."
+              : "Analyze MRI"
+            }
+
           </button>
 
         </section>
 
 
-        {/* =====================================================
+        {/* ===================================================
             ORIGINAL MRI
-            Shows after selecting an image.
-        ===================================================== */}
+        =================================================== */}
 
         {file && previewUrl && (
 
@@ -587,15 +492,9 @@ function Compare() {
               </div>
 
 
-              <button
-                type="button"
-                onClick={() =>
-                  downloadImage(
-                    previewUrl,
-                    file.name ||
-                      "original-mri.jpg"
-                  )
-                }
+              <a
+                href={previewUrl}
+                download={file.name}
                 className="
                   mt-3
                   block
@@ -612,14 +511,10 @@ function Compare() {
                   hover:text-[#2ad9c2]
 
                   transition
-
-                  focus-visible:outline-none
-                  focus-visible:ring-2
-                  focus-visible:ring-[#2ad9c2]
                 "
               >
                 Download Original
-              </button>
+              </a>
 
             </div>
 
@@ -628,772 +523,270 @@ function Compare() {
         )}
 
 
-        {/* =====================================================
-            LOADING STATE
-            Shows ONLY while API request is running.
-        ===================================================== */}
+        {/* ===================================================
+            RESULT
+        =================================================== */}
 
-        {loading && (
+        {result && (
 
-          <section
-            className="
-              mt-8
-              bg-[#10151c]
-              border
-              border-[#212a35]
-              rounded-[10px]
-              p-8
-              text-center
-            "
-          >
+          <section className="mt-8">
+
+            <h2
+              className="
+                text-2xl
+                font-bold
+                text-white
+                mb-4
+              "
+            >
+              UNet++ Analysis
+            </h2>
+
 
             <div
               className="
-                inline-block
-                w-8
-                h-8
-                border-2
+                bg-[#10151c]
+                border
                 border-[#212a35]
-                border-t-[#2ad9c2]
-                rounded-full
-                animate-spin
-                mb-4
+                rounded-[10px]
+                p-4
               "
-            />
-
-            <p
-              className="
-                text-[#2ad9c2]
-                font-semibold
-              "
+              style={{
+                borderTop:
+                  `3px solid ${model.color}`,
+              }}
             >
-              Analyzing MRI...
-            </p>
 
-            <p
-              className="
-                text-sm
-                text-[#64748b]
-                mt-2
-              "
-            >
-              Running UNet, Residual UNet and UNet++.
-            </p>
+              {/* =============================================
+                  MODEL NAME
+              ============================================= */}
 
-          </section>
-
-        )}
-
-
-        {/* =====================================================
-            EVERYTHING BELOW THIS POINT ONLY APPEARS
-            AFTER SUCCESSFUL ANALYSIS
-        ===================================================== */}
-
-        {result && !loading && (
-
-          <>
-
-            {/* =================================================
-                MODEL COMPARISON
-            ================================================= */}
-
-            <section className="mt-8">
-
-              <h2
+              <div
                 className="
-                  text-2xl
-                  font-bold
-                  text-white
-                  mb-4
+                  flex
+                  items-center
+                  justify-center
+                  gap-2
+                  mb-5
                 "
               >
-                Model Comparison
-              </h2>
 
+                <span
+                  className="
+                    w-2.5
+                    h-2.5
+                    rounded-full
+                  "
+                  style={{
+                    backgroundColor:
+                      model.color,
+                    boxShadow:
+                      `0 0 8px ${model.color}66`,
+                  }}
+                />
+
+
+                <h3
+                  className="
+                    text-lg
+                    font-bold
+                  "
+                  style={{
+                    color: model.color,
+                  }}
+                >
+                  UNet++
+                </h3>
+
+              </div>
+
+
+              {/* =============================================
+                  PREDICTED MASK
+              ============================================= */}
+
+              {result.mask_file && (
+
+                <>
+                  <div
+                    className="
+                      bg-[#161c25]
+                      border
+                      border-[#212a35]
+                      rounded-lg
+                      p-3
+                    "
+                  >
+
+                    <h4
+                      className="
+                        text-sm
+                        font-semibold
+                        text-center
+                        text-[#cbd5e1]
+                        mb-3
+                      "
+                    >
+                      Predicted Mask
+                    </h4>
+
+
+                    <div
+                      className="
+                        bg-black
+                        border
+                        border-[#212a35]
+                        rounded-lg
+                        overflow-hidden
+                      "
+                    >
+
+                      <img
+                        src={getOutputUrl(
+                          result.mask_file
+                        )}
+                        alt="UNet++ predicted mask"
+                        className="
+                          w-full
+                          aspect-square
+                          object-contain
+                        "
+                      />
+
+                    </div>
+
+                  </div>
+
+
+                  <a
+                    href={getOutputUrl(
+                      result.mask_file
+                    )}
+                    download
+                    className="
+                      mt-3
+                      block
+                      w-full
+                      text-center
+                      px-4
+                      py-2.5
+                      rounded-lg
+                      border
+                      font-semibold
+                      text-sm
+                    "
+                    style={{
+                      color: model.color,
+                      borderColor:
+                        `${model.color}99`,
+                    }}
+                  >
+                    Download Mask
+                  </a>
+                </>
+
+              )}
+
+
+              {/* =============================================
+                  TUMOR OVERLAY
+              ============================================= */}
+
+              {result.overlay_file && (
+
+                <>
+                  <div
+                    className="
+                      bg-[#161c25]
+                      border
+                      border-[#212a35]
+                      rounded-lg
+                      p-3
+                      mt-4
+                    "
+                  >
+
+                    <h4
+                      className="
+                        text-sm
+                        font-semibold
+                        text-center
+                        text-[#cbd5e1]
+                        mb-3
+                      "
+                    >
+                      Tumor Overlay
+                    </h4>
+
+
+                    <div
+                      className="
+                        bg-black
+                        border
+                        border-[#212a35]
+                        rounded-lg
+                        overflow-hidden
+                      "
+                    >
+
+                      <img
+                        src={getOutputUrl(
+                          result.overlay_file
+                        )}
+                        alt="UNet++ tumor overlay"
+                        className="
+                          w-full
+                          aspect-square
+                          object-contain
+                        "
+                      />
+
+                    </div>
+
+                  </div>
+
+
+                  <a
+                    href={getOutputUrl(
+                      result.overlay_file
+                    )}
+                    download
+                    className="
+                      mt-3
+                      block
+                      w-full
+                      text-center
+                      px-4
+                      py-2.5
+                      rounded-lg
+                      border
+                      font-semibold
+                      text-sm
+                    "
+                    style={{
+                      color: model.color,
+                      borderColor:
+                        `${model.color}99`,
+                    }}
+                  >
+                    Download Overlay
+                  </a>
+                </>
+
+              )}
+
+
+              {/* =============================================
+                  METRICS
+              ============================================= */}
 
               <div
                 className="
                   grid
                   grid-cols-1
                   md:grid-cols-3
-                  gap-4
-                "
-              >
-
-                {models.map((model) => {
-
-                  const modelResult =
-                    getModelResult(
-                      model.key
-                    );
-
-                  return (
-
-                    <div
-                      key={model.key}
-                      className="
-                        bg-[#10151c]
-                        border
-                        border-[#212a35]
-                        rounded-[10px]
-                        p-4
-                        overflow-hidden
-                      "
-                      style={{
-                        borderTop:
-                          `3px solid ${model.color}`,
-                      }}
-                    >
-
-                      {/* MODEL NAME */}
-
-                      <div
-                        className="
-                          flex
-                          items-center
-                          justify-center
-                          gap-2
-                          mb-5
-                        "
-                      >
-
-                        <span
-                          className="
-                            w-2.5
-                            h-2.5
-                            rounded-full
-                          "
-                          style={{
-                            backgroundColor:
-                              model.color,
-                            boxShadow:
-                              `0 0 8px ${model.color}66`,
-                          }}
-                        />
-
-                        <h3
-                          className="
-                            text-lg
-                            font-bold
-                          "
-                          style={{
-                            color:
-                              model.color,
-                          }}
-                        >
-                          {model.name}
-                        </h3>
-
-                      </div>
-
-
-                      {/* MASK */}
-
-                      <div
-                        className="
-                          bg-[#161c25]
-                          border
-                          border-[#212a35]
-                          rounded-lg
-                          p-3
-                        "
-                      >
-
-                        <h4
-                          className="
-                            text-sm
-                            font-semibold
-                            text-center
-                            text-[#cbd5e1]
-                            mb-3
-                          "
-                        >
-                          Predicted Mask
-                        </h4>
-
-                        <div
-                          className="
-                            bg-black
-                            border
-                            border-[#212a35]
-                            rounded-lg
-                            overflow-hidden
-                          "
-                        >
-
-                          <img
-                            src={getOutputUrl(
-                              modelResult?.mask_file
-                            )}
-                            alt={`${model.name} predicted mask`}
-                            className="
-                              w-full
-                              aspect-square
-                              object-contain
-                            "
-                          />
-
-                        </div>
-
-                      </div>
-
-
-                      {/* DOWNLOAD MASK */}
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          downloadImage(
-                            getOutputUrl(
-                              modelResult?.mask_file
-                            ),
-                            `${model.key}-mask.png`
-                          )
-                        }
-                        className="
-                          mt-3
-                          w-full
-                          px-4
-                          py-2.5
-                          rounded-lg
-                          border
-                          font-semibold
-                          text-sm
-                          transition
-
-                          focus-visible:outline-none
-                          focus-visible:ring-2
-                          focus-visible:ring-[#2ad9c2]
-                        "
-                        style={{
-                          color:
-                            model.color,
-                          borderColor:
-                            `${model.color}99`,
-                        }}
-                      >
-                        Download Mask
-                      </button>
-
-
-                      {/* OVERLAY */}
-
-                      <div
-                        className="
-                          bg-[#161c25]
-                          border
-                          border-[#212a35]
-                          rounded-lg
-                          p-3
-                          mt-4
-                        "
-                      >
-
-                        <h4
-                          className="
-                            text-sm
-                            font-semibold
-                            text-center
-                            text-[#cbd5e1]
-                            mb-3
-                          "
-                        >
-                          Tumor Overlay
-                        </h4>
-
-                        <div
-                          className="
-                            bg-black
-                            border
-                            border-[#212a35]
-                            rounded-lg
-                            overflow-hidden
-                          "
-                        >
-
-                          <img
-                            src={getOutputUrl(
-                              modelResult?.overlay_file
-                            )}
-                            alt={`${model.name} tumor overlay`}
-                            className="
-                              w-full
-                              aspect-square
-                              object-contain
-                            "
-                          />
-
-                        </div>
-
-                      </div>
-
-
-                      {/* DOWNLOAD OVERLAY */}
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          downloadImage(
-                            getOutputUrl(
-                              modelResult?.overlay_file
-                            ),
-                            `${model.key}-overlay.png`
-                          )
-                        }
-                        className="
-                          mt-3
-                          w-full
-                          px-4
-                          py-2.5
-                          rounded-lg
-                          border
-                          font-semibold
-                          text-sm
-                          transition
-
-                          focus-visible:outline-none
-                          focus-visible:ring-2
-                          focus-visible:ring-[#2ad9c2]
-                        "
-                        style={{
-                          color:
-                            model.color,
-                          borderColor:
-                            `${model.color}99`,
-                        }}
-                      >
-                        Download Overlay
-                      </button>
-
-
-                      {/* TUMOR AREA */}
-
-                      <div
-                        className="
-                          bg-[#161c25]
-                          border
-                          border-[#212a35]
-                          rounded-lg
-                          p-4
-                          mt-4
-                          text-center
-                        "
-                      >
-
-                        <p
-                          className="
-                            text-xs
-                            text-[#64748b]
-                          "
-                        >
-                          Tumor Area
-                        </p>
-
-                        <p
-                          className="
-                            mt-1
-                            text-2xl
-                            font-bold
-                            font-mono
-                            text-[#f0a944]
-                          "
-                        >
-                          {Number(
-                            modelResult?.tumor_percentage ??
-                              0
-                          ).toFixed(2)}
-                          %
-                        </p>
-
-                      </div>
-
-
-                      {/* CONFIDENCE */}
-
-                      <div
-                        className="
-                          bg-[#161c25]
-                          border
-                          border-[#212a35]
-                          rounded-lg
-                          p-4
-                          mt-3
-                        "
-                      >
-
-                        <div className="text-center">
-
-                          <p
-                            className="
-                              text-xs
-                              text-[#64748b]
-                            "
-                          >
-                            Confidence
-                          </p>
-
-                          <p
-                            className="
-                              mt-1
-                              text-2xl
-                              font-bold
-                              font-mono
-                              text-[#2ad9c2]
-                            "
-                          >
-                            {(
-                              Number(
-                                modelResult?.confidence ??
-                                  0
-                              ) * 100
-                            ).toFixed(2)}
-                            %
-                          </p>
-
-                        </div>
-
-
-                        <div
-                          className="
-                            mt-3
-                            h-1
-                            bg-[#212a35]
-                            rounded-full
-                            overflow-hidden
-                          "
-                        >
-
-                          <div
-                            className="
-                              h-full
-                              rounded-full
-                            "
-                            style={{
-                              width:
-                                `${Math.min(
-                                  Math.max(
-                                    Number(
-                                      modelResult?.confidence ??
-                                        0
-                                    ) * 100,
-                                    0
-                                  ),
-                                  100
-                                )}%`,
-                              backgroundColor:
-                                model.color,
-                            }}
-                          />
-
-                        </div>
-
-                      </div>
-
-
-                      {/* INFERENCE TIME */}
-
-                      <div
-                        className="
-                          bg-[#161c25]
-                          border
-                          border-[#212a35]
-                          rounded-lg
-                          p-4
-                          mt-3
-                          text-center
-                        "
-                      >
-
-                        <p
-                          className="
-                            text-xs
-                            text-[#64748b]
-                          "
-                        >
-                          Inference Time
-                        </p>
-
-                        <p
-                          className="
-                            mt-1
-                            text-xl
-                            font-bold
-                            font-mono
-                            text-white
-                          "
-                        >
-                          {Number(
-                            modelResult?.inference_time_ms ??
-                              0
-                          ).toFixed(2)}
-                          {" "}ms
-                        </p>
-
-                      </div>
-
-                    </div>
-
-                  );
-
-                })}
-
-              </div>
-
-            </section>
-
-
-            {/* =================================================
-                PERFORMANCE SUMMARY
-            ================================================= */}
-
-            <section className="mt-10">
-
-              <h2
-                className="
-                  text-2xl
-                  font-bold
-                  text-white
-                  mb-4
-                "
-              >
-                Performance Summary
-              </h2>
-
-
-              <div
-                className="
-                  overflow-x-auto
-                  bg-[#10151c]
-                  border
-                  border-[#212a35]
-                  rounded-[10px]
-                "
-              >
-
-                <table className="w-full text-sm">
-
-                  <thead>
-
-                    <tr
-                      className="
-                        border-b
-                        border-[#212a35]
-                      "
-                    >
-
-                      <th
-                        className="
-                          text-left
-                          px-5
-                          py-4
-                          text-xs
-                          uppercase
-                          tracking-wider
-                          text-[#64748b]
-                        "
-                      >
-                        Model
-                      </th>
-
-                      <th
-                        className="
-                          text-center
-                          px-5
-                          py-4
-                          text-xs
-                          uppercase
-                          tracking-wider
-                          text-[#64748b]
-                        "
-                      >
-                        Tumor Area
-                      </th>
-
-                      <th
-                        className="
-                          text-center
-                          px-5
-                          py-4
-                          text-xs
-                          uppercase
-                          tracking-wider
-                          text-[#64748b]
-                        "
-                      >
-                        Confidence
-                      </th>
-
-                      <th
-                        className="
-                          text-center
-                          px-5
-                          py-4
-                          text-xs
-                          uppercase
-                          tracking-wider
-                          text-[#64748b]
-                        "
-                      >
-                        Inference Time
-                      </th>
-
-                    </tr>
-
-                  </thead>
-
-
-                  <tbody>
-
-                    {models.map((model) => {
-
-                      const modelResult =
-                        getModelResult(
-                          model.key
-                        );
-
-                      return (
-
-                        <tr
-                          key={model.key}
-                          className="
-                            border-b
-                            border-[#212a35]
-                            last:border-0
-                          "
-                        >
-
-                          <td
-                            className="
-                              px-5
-                              py-4
-                              font-semibold
-                              font-mono
-                            "
-                            style={{
-                              color:
-                                model.color,
-                            }}
-                          >
-
-                            <span
-                              className="
-                                inline-flex
-                                items-center
-                                gap-2
-                              "
-                            >
-
-                              <span
-                                className="
-                                  w-2
-                                  h-2
-                                  rounded-full
-                                "
-                                style={{
-                                  backgroundColor:
-                                    model.color,
-                                }}
-                              />
-
-                              {model.name}
-
-                            </span>
-
-                          </td>
-
-
-                          <td
-                            className="
-                              px-5
-                              py-4
-                              text-center
-                              font-mono
-                              text-[#f0a944]
-                            "
-                          >
-                            {Number(
-                              modelResult?.tumor_percentage ??
-                                0
-                            ).toFixed(2)}
-                            %
-                          </td>
-
-
-                          <td
-                            className="
-                              px-5
-                              py-4
-                              text-center
-                              font-mono
-                              text-[#2ad9c2]
-                            "
-                          >
-                            {(
-                              Number(
-                                modelResult?.confidence ??
-                                  0
-                              ) * 100
-                            ).toFixed(2)}
-                            %
-                          </td>
-
-
-                          <td
-                            className="
-                              px-5
-                              py-4
-                              text-center
-                              font-mono
-                              text-white
-                            "
-                          >
-                            {Number(
-                              modelResult?.inference_time_ms ??
-                                0
-                            ).toFixed(2)}
-                            {" "}ms
-                          </td>
-
-                        </tr>
-
-                      );
-
-                    })}
-
-                  </tbody>
-
-                </table>
-
-              </div>
-
-            </section>
-
-
-            {/* =================================================
-                CHARTS
-            ================================================= */}
-
-            <section className="mt-10">
-
-              <h2
-                className="
-                  text-2xl
-                  font-bold
-                  text-white
-                  mb-5
-                "
-              >
-                Performance Charts
-              </h2>
-
-
-              <div
-                className="
-                  grid
-                  grid-cols-1
-                  lg:grid-cols-2
-                  gap-5
+                  gap-3
+                  mt-4
                 "
               >
 
@@ -1401,105 +794,36 @@ function Compare() {
 
                 <div
                   className="
-                    bg-[#10151c]
+                    bg-[#161c25]
                     border
                     border-[#212a35]
-                    rounded-[10px]
-                    p-5
+                    rounded-lg
+                    p-4
+                    text-center
                   "
                 >
 
-                  <h3
+                  <p
                     className="
-                      text-center
-                      text-sm
-                      font-semibold
-                      text-[#e2e8f0]
-                      mb-5
+                      text-xs
+                      text-[#64748b]
                     "
                   >
-                    Tumor Area Comparison
-                  </h3>
+                    Tumor Area
+                  </p>
 
 
-                  <div className="h-[320px]">
-
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                    >
-
-                      <BarChart
-                        data={chartData}
-                      >
-
-                        <CartesianGrid
-                          stroke="#212a35"
-                          strokeDasharray="3 3"
-                        />
-
-                        <XAxis
-                          dataKey="model"
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                        />
-
-                        <YAxis
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                          label={{
-                            value:
-                              "Tumor Area (%)",
-                            angle: -90,
-                            position:
-                              "insideLeft",
-                            fill:
-                              "#94a3b8",
-                          }}
-                        />
-
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor:
-                              "#10151c",
-                            border:
-                              "1px solid #212a35",
-                            borderRadius:
-                              "8px",
-                            color:
-                              "#fff",
-                          }}
-                        />
-
-                        <Bar
-                          dataKey="tumorArea"
-                          name="Tumor Area"
-                        >
-
-                          {chartData.map(
-                            (entry, index) => (
-                              <Cell
-                                key={
-                                  `tumor-${index}`
-                                }
-                                fill={
-                                  entry.color
-                                }
-                              />
-                            )
-                          )}
-
-                        </Bar>
-
-                      </BarChart>
-
-                    </ResponsiveContainer>
-
-                  </div>
+                  <p
+                    className="
+                      mt-1
+                      text-2xl
+                      font-bold
+                      font-mono
+                      text-[#f0a944]
+                    "
+                  >
+                    {tumorPercentage.toFixed(2)}%
+                  </p>
 
                 </div>
 
@@ -1508,104 +832,70 @@ function Compare() {
 
                 <div
                   className="
-                    bg-[#10151c]
+                    bg-[#161c25]
                     border
                     border-[#212a35]
-                    rounded-[10px]
-                    p-5
+                    rounded-lg
+                    p-4
+                    text-center
                   "
                 >
 
-                  <h3
+                  <p
                     className="
-                      text-center
-                      text-sm
-                      font-semibold
-                      text-[#e2e8f0]
-                      mb-5
+                      text-xs
+                      text-[#64748b]
                     "
                   >
-                    Confidence Comparison
-                  </h3>
+                    Confidence
+                  </p>
 
 
-                  <div className="h-[320px]">
+                  <p
+                    className="
+                      mt-1
+                      text-2xl
+                      font-bold
+                      font-mono
+                      text-[#2ad9c2]
+                    "
+                  >
+                    {(
+                      confidence * 100
+                    ).toFixed(2)}%
+                  </p>
 
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                    >
 
-                      <BarChart
-                        data={chartData}
-                      >
+                  {/* Progress bar */}
 
-                        <CartesianGrid
-                          stroke="#212a35"
-                          strokeDasharray="3 3"
-                        />
+                  <div
+                    className="
+                      mt-3
+                      h-1
+                      bg-[#212a35]
+                      rounded-full
+                      overflow-hidden
+                    "
+                  >
 
-                        <XAxis
-                          dataKey="model"
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                        />
-
-                        <YAxis
-                          domain={[0, 100]}
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                          label={{
-                            value:
-                              "Confidence (%)",
-                            angle: -90,
-                            position:
-                              "insideLeft",
-                            fill:
-                              "#94a3b8",
-                          }}
-                        />
-
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor:
-                              "#10151c",
-                            border:
-                              "1px solid #212a35",
-                            borderRadius:
-                              "8px",
-                            color:
-                              "#fff",
-                          }}
-                        />
-
-                        <Bar
-                          dataKey="confidence"
-                          name="Confidence"
-                        >
-
-                          {chartData.map(
-                            (entry, index) => (
-                              <Cell
-                                key={
-                                  `confidence-${index}`
-                                }
-                                fill={
-                                  entry.color
-                                }
-                              />
-                            )
-                          )}
-
-                        </Bar>
-
-                      </BarChart>
-
-                    </ResponsiveContainer>
+                    <div
+                      className="
+                        h-full
+                        rounded-full
+                      "
+                      style={{
+                        width:
+                          `${Math.min(
+                            Math.max(
+                              confidence * 100,
+                              0
+                            ),
+                            100
+                          )}%`,
+                        backgroundColor:
+                          model.color,
+                      }}
+                    />
 
                   </div>
 
@@ -1616,150 +906,89 @@ function Compare() {
 
                 <div
                   className="
-                    lg:col-span-2
-                    bg-[#10151c]
+                    bg-[#161c25]
                     border
                     border-[#212a35]
-                    rounded-[10px]
-                    p-5
+                    rounded-lg
+                    p-4
+                    text-center
                   "
                 >
 
-                  <h3
+                  <p
                     className="
-                      text-center
-                      text-sm
-                      font-semibold
-                      text-[#e2e8f0]
-                      mb-5
+                      text-xs
+                      text-[#64748b]
                     "
                   >
-                    Inference Time Comparison
-                  </h3>
+                    Inference Time
+                  </p>
 
 
-                  <div className="h-[320px]">
-
-                    <ResponsiveContainer
-                      width="100%"
-                      height="100%"
-                    >
-
-                      <BarChart
-                        data={chartData}
-                      >
-
-                        <CartesianGrid
-                          stroke="#212a35"
-                          strokeDasharray="3 3"
-                        />
-
-                        <XAxis
-                          dataKey="model"
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                        />
-
-                        <YAxis
-                          tick={{
-                            fill: "#94a3b8",
-                            fontSize: 11,
-                          }}
-                          label={{
-                            value:
-                              "Inference Time (ms)",
-                            angle: -90,
-                            position:
-                              "insideLeft",
-                            fill:
-                              "#94a3b8",
-                          }}
-                        />
-
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor:
-                              "#10151c",
-                            border:
-                              "1px solid #212a35",
-                            borderRadius:
-                              "8px",
-                            color:
-                              "#fff",
-                          }}
-                        />
-
-                        <Bar
-                          dataKey="inferenceTime"
-                          name="Inference Time"
-                        >
-
-                          {chartData.map(
-                            (entry, index) => (
-                              <Cell
-                                key={
-                                  `time-${index}`
-                                }
-                                fill={
-                                  entry.color
-                                }
-                              />
-                            )
-                          )}
-
-                        </Bar>
-
-                      </BarChart>
-
-                    </ResponsiveContainer>
-
-                  </div>
+                  <p
+                    className="
+                      mt-1
+                      text-2xl
+                      font-bold
+                      font-mono
+                      text-white
+                    "
+                  >
+                    {inferenceTime.toFixed(2)}
+                    ms
+                  </p>
 
                 </div>
 
               </div>
 
-            </section>
+
+              {/* =============================================
+                  OTHER BACKEND INFORMATION
+              ============================================= */}
+
+              {result.prediction && (
+
+                <div
+                  className="
+                    bg-[#161c25]
+                    border
+                    border-[#212a35]
+                    rounded-lg
+                    p-4
+                    mt-4
+                  "
+                >
+
+                  <p
+                    className="
+                      text-xs
+                      text-[#64748b]
+                    "
+                  >
+                    Prediction
+                  </p>
 
 
-            {/* =================================================
-                NOTE
-            ================================================= */}
+                  <p
+                    className="
+                      mt-1
+                      text-lg
+                      font-semibold
+                    "
+                  >
+                    {String(
+                      result.prediction
+                    )}
+                  </p>
 
-            <div
-              className="
-                mt-8
-                border
-                border-[#f0a944]/30
-                bg-[#f0a944]/5
-                rounded-[10px]
-                p-4
-              "
-            >
+                </div>
 
-              <p
-                className="
-                  text-sm
-                  text-[#f0a944]
-                "
-              >
-
-                <span className="font-bold">
-                  Note:
-                </span>{" "}
-
-                This system is intended for
-                research and educational purposes.
-                The segmentation results should not
-                be considered a medical diagnosis.
-
-              </p>
+              )}
 
             </div>
 
-          </>
+          </section>
 
         )}
 
