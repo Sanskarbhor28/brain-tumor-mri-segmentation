@@ -1,5 +1,6 @@
 import os
 import sys
+import gc
 import torch
 
 from huggingface_hub import hf_hub_download
@@ -8,16 +9,6 @@ from huggingface_hub import hf_hub_download
 # ============================================================
 # PROJECT ROOT
 # ============================================================
-
-# Current file:
-#
-# C:\Project\BrainTumorResearch\backend\models\model_manager.py
-#
-# Go:
-#
-# models -> backend -> BrainTumorResearch
-#
-# Therefore we need TWO ".."
 
 PROJECT_ROOT = os.path.abspath(
     os.path.join(
@@ -30,11 +21,9 @@ PROJECT_ROOT = os.path.abspath(
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-print(f"Project root: {PROJECT_ROOT}")
-
 
 # ============================================================
-# IMPORT MODEL ARCHITECTURES
+# MODEL IMPORTS
 # ============================================================
 
 from src.model import UNet
@@ -47,9 +36,7 @@ from src.unetplusplus_model import UNetPlusPlus
 # ============================================================
 
 device = torch.device(
-    "cuda"
-    if torch.cuda.is_available()
-    else "cpu"
+    "cuda" if torch.cuda.is_available() else "cpu"
 )
 
 print(f"Using device: {device}")
@@ -68,41 +55,48 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 
 # ============================================================
-# CHECKPOINT FILES
+# CHECKPOINTS
 # ============================================================
 
 CHECKPOINT_FILES = {
-
-    "unet":
-        "unet_epoch_5.pth",
-
-    "residual_unet":
-        "best_residual_unet.pth",
-
-    "unetplusplus":
-        "best_unetplusplus.pth",
+    "unet": "unet_epoch_5.pth",
+    "residual_unet": "best_residual_unet.pth",
+    "unetplusplus": "best_unetplusplus.pth",
 }
 
 
 # ============================================================
-# MODEL STORAGE
+# MODEL CLASSES
 # ============================================================
 
-MODELS = {}
+MODEL_CLASSES = {
+    "unet": UNet,
+    "residual_unet": ResidualUNet,
+    "unetplusplus": UNetPlusPlus,
+}
 
 
 # ============================================================
-# DOWNLOAD CHECKPOINT
+# CACHE DOWNLOADED FILES
 # ============================================================
 
-def download_checkpoint(model_name: str) -> str:
+CHECKPOINT_PATHS = {}
+
+
+# ============================================================
+# DOWNLOAD MODEL
+# ============================================================
+
+def get_checkpoint(model_name):
+
+    if model_name in CHECKPOINT_PATHS:
+        return CHECKPOINT_PATHS[model_name]
 
     filename = CHECKPOINT_FILES[model_name]
 
     print()
     print("=" * 60)
-    print(f"Downloading checkpoint: {model_name}")
-    print(f"Repository: {HF_REPO_ID}")
+    print(f"Downloading/loading checkpoint: {model_name}")
     print(f"File: {filename}")
     print("=" * 60)
 
@@ -112,44 +106,53 @@ def download_checkpoint(model_name: str) -> str:
         token=HF_TOKEN if HF_TOKEN else None,
     )
 
-    print(
-        f"✓ Checkpoint ready: {path}"
-    )
+    CHECKPOINT_PATHS[model_name] = path
+
+    print(f"✓ Checkpoint ready: {path}")
 
     return path
 
 
 # ============================================================
-# LOAD CHECKPOINT
+# LOAD ONE MODEL
 # ============================================================
 
-def load_checkpoint(
-    model,
-    checkpoint_path: str
-):
+def load_model(model_name):
+
+    if model_name not in MODEL_CLASSES:
+        raise ValueError(
+            f"Unknown model: {model_name}"
+        )
+
+    print()
+    print("=" * 60)
+    print(f"LOADING {model_name.upper()}")
+    print("=" * 60)
+
+    checkpoint_path = get_checkpoint(
+        model_name
+    )
+
+    model_class = MODEL_CLASSES[
+        model_name
+    ]
+
+    model = model_class().to(device)
 
     checkpoint = torch.load(
         checkpoint_path,
         map_location=device
     )
 
-    # Your checkpoints were saved using:
-    #
-    # checkpoint["model_state_dict"]
-
     if (
         isinstance(checkpoint, dict)
         and
         "model_state_dict" in checkpoint
     ):
-
-        state_dict = (
-            checkpoint["model_state_dict"]
-        )
-
+        state_dict = checkpoint[
+            "model_state_dict"
+        ]
     else:
-
-        # Fallback for raw state_dict
         state_dict = checkpoint
 
     model.load_state_dict(
@@ -158,132 +161,27 @@ def load_checkpoint(
 
     model.eval()
 
+    print(
+        f"✓ {model_name} loaded"
+    )
+
     return model
 
 
 # ============================================================
-# LOAD ALL MODELS
+# UNLOAD MODEL
 # ============================================================
 
-def load_models():
+def unload_model(model):
 
-    print()
-    print("=" * 60)
-    print("LOADING BRAIN TUMOR SEGMENTATION MODELS")
-    print("=" * 60)
+    if model is None:
+        return
 
+    del model
 
-    # ========================================================
-    # UNET
-    # ========================================================
+    gc.collect()
 
-    print()
-    print("Loading UNet...")
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
-    unet_checkpoint = (
-        download_checkpoint("unet")
-    )
-
-    unet = UNet().to(device)
-
-    load_checkpoint(
-        unet,
-        unet_checkpoint
-    )
-
-    MODELS["unet"] = unet
-
-    print("✓ UNet loaded")
-
-
-    # ========================================================
-    # RESIDUAL UNET
-    # ========================================================
-
-    print()
-    print("Loading Residual UNet...")
-
-    residual_checkpoint = (
-        download_checkpoint(
-            "residual_unet"
-        )
-    )
-
-    residual = (
-        ResidualUNet().to(device)
-    )
-
-    load_checkpoint(
-        residual,
-        residual_checkpoint
-    )
-
-    MODELS["residual_unet"] = (
-        residual
-    )
-
-    print(
-        "✓ Residual UNet loaded"
-    )
-
-
-    # ========================================================
-    # UNET++
-    # ========================================================
-
-    print()
-    print("Loading UNet++...")
-
-    unetplusplus_checkpoint = (
-        download_checkpoint(
-            "unetplusplus"
-        )
-    )
-
-    unetpp = (
-        UNetPlusPlus().to(device)
-    )
-
-    load_checkpoint(
-        unetpp,
-        unetplusplus_checkpoint
-    )
-
-    MODELS["unetplusplus"] = (
-        unetpp
-    )
-
-    print("✓ UNet++ loaded")
-
-
-    # ========================================================
-    # COMPLETE
-    # ========================================================
-
-    print()
-    print("=" * 60)
-    print("✓ ALL MODELS LOADED SUCCESSFULLY")
-    print("=" * 60)
-
-    print()
-    print("Available models:")
-
-    for model_name in MODELS:
-
-        print(
-            f"  ✓ {model_name}"
-        )
-
-    print()
-    print(
-        f"Device: {device}"
-    )
-
-    print()
-
-
-# ============================================================
-# START MODEL LOADING
-# ============================================================
-
-load_models()
+    print("✓ Model memory released")
