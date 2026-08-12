@@ -5,11 +5,14 @@ from fastapi.staticfiles import StaticFiles
 from routers.predict import router as predict_router
 
 
+# ==========================================================
+# APP
+# ==========================================================
+
 app = FastAPI(
     title="Brain Tumor Segmentation API",
     description=(
-        "Brain Tumor MRI Segmentation using "
-        "UNet, Residual UNet and UNet++"
+        "Brain Tumor MRI Segmentation using UNet++"
     ),
     version="1.0.0"
 )
@@ -21,17 +24,21 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
+
     allow_origins=[
-        # Local development
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        
 
-        # Add your Vercel URL here after frontend deployment
-        # Example:
-        # "https://brain-tumor-research.vercel.app",
+        # Your deployed frontend
+        # Add it here if you deploy frontend separately
+        # "https://your-frontend.onrender.com",
     ],
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
 
@@ -62,14 +69,17 @@ app.include_router(
 
 @app.get("/")
 async def home():
+
     return {
         "status": "success",
-        "message": "Brain Tumor Segmentation API is Running",
+
+        "message":
+            "Brain Tumor Segmentation API is Running",
+
         "models": [
-            "UNet",
-            "Residual UNet",
             "UNet++"
         ],
+
         "version": "1.0.0"
     }
 
@@ -80,6 +90,7 @@ async def home():
 
 @app.get("/health")
 async def health():
+
     return {
         "status": "healthy"
     }

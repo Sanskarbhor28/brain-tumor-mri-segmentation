@@ -1,247 +1,178 @@
 import os
 import sys
-import gc
 import torch
+
 
 # ============================================================
 # PROJECT ROOT
 # ============================================================
 
-PROJECT_ROOT = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
+MODELS_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+BACKEND_DIR = os.path.dirname(
+    MODELS_DIR
+)
+
+PROJECT_ROOT = os.path.dirname(
+    BACKEND_DIR
 )
 
 if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+    sys.path.insert(
+        0,
+        PROJECT_ROOT
+    )
+
 
 # ============================================================
-# MODEL IMPORTS
+# IMPORT MODELS
 # ============================================================
 
 from src.model import UNet
 from src.residual_model import ResidualUNet
 from src.unetplusplus_model import UNetPlusPlus
 
+
 # ============================================================
 # DEVICE
 # ============================================================
 
-# Render Free should use CPU
-device = torch.device("cpu")
+device = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "cpu"
+)
 
-print(f"Using device: {device}")
+print("=" * 60)
+print("BRAIN TUMOR SEGMENTATION")
+print("=" * 60)
 
-# ============================================================
-# HUGGING FACE
-# ============================================================
-
-HF_REPO = "CursedShadow2x8/brain-tumor-segmentation-models"
-
-# ============================================================
-# RENDER MODE
-# ============================================================
-
-# Set DEPLOYMENT=render in Render Environment Variables
-IS_RENDER = os.getenv("DEPLOYMENT", "").lower() == "render"
-
-if IS_RENDER:
-    AVAILABLE_MODELS = [
-        "unetplusplus"
-    ]
-else:
-    AVAILABLE_MODELS = [
-        "unet",
-        "residual_unet",
-        "unetplusplus"
-    ]
-
-print("Available models:")
-for model in AVAILABLE_MODELS:
-    print(f"  ✓ {model}")
-
-# ============================================================
-# MODEL CACHE
-# ============================================================
-
-MODELS = {}
+print(
+    f"Using device: {device}"
+)
 
 
 # ============================================================
-# CHECKPOINT PATH
+# CHECKPOINT PATHS
 # ============================================================
 
-def get_checkpoint(model_name):
+CHECKPOINTS = {
 
-    local_paths = {
-        "unet": os.path.join(
+    # Your actual file is directly inside checkpoints/
+    "unet":
+        os.path.join(
             PROJECT_ROOT,
             "checkpoints",
             "unet_epoch_5.pth"
         ),
 
-        "residual_unet": os.path.join(
+    "residual_unet":
+        os.path.join(
             PROJECT_ROOT,
             "checkpoints",
             "residual_unet",
             "best_residual_unet.pth"
         ),
 
-        "unetplusplus": os.path.join(
+    "unetplusplus":
+        os.path.join(
             PROJECT_ROOT,
             "checkpoints",
             "unetplusplus",
             "best_unetplusplus.pth"
         )
-    }
-
-    local_path = local_paths[model_name]
-
-    # --------------------------------------------------------
-    # Local machine
-    # --------------------------------------------------------
-
-    if os.path.exists(local_path):
-        print(f"Using local checkpoint: {local_path}")
-        return local_path
-
-    # --------------------------------------------------------
-    # Render / Hugging Face
-    # --------------------------------------------------------
-
-    print(
-        f"Local checkpoint not found for {model_name}."
-    )
-
-    try:
-
-        from huggingface_hub import hf_hub_download
-
-        hf_files = {
-            "unet": "unet_epoch_5.pth",
-            "residual_unet": "best_residual_unet.pth",
-            "unetplusplus": "best_unetplusplus.pth"
-        }
-
-        print(
-            f"Downloading {hf_files[model_name]} "
-            f"from Hugging Face..."
-        )
-
-        downloaded = hf_hub_download(
-            repo_id=HF_REPO,
-            filename=hf_files[model_name]
-        )
-
-        print(
-            f"✓ Downloaded checkpoint: {downloaded}"
-        )
-
-        return downloaded
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"Could not obtain checkpoint for "
-            f"{model_name}: {e}"
-        )
+}
 
 
 # ============================================================
-# CREATE MODEL
+# AVAILABLE MODELS
 # ============================================================
 
-def create_model(model_name):
-
-    if model_name == "unet":
-
-        return UNet().to(device)
-
-    elif model_name == "residual_unet":
-
-        return ResidualUNet().to(device)
-
-    elif model_name == "unetplusplus":
-
-        return UNetPlusPlus().to(device)
-
-    else:
-
-        raise ValueError(
-            f"Unknown model: {model_name}"
-        )
+AVAILABLE_MODELS = [
+    "unet",
+    "residual_unet",
+    "unetplusplus"
+]
 
 
 # ============================================================
-# LOAD MODEL
+# MODEL STORAGE
 # ============================================================
 
-def load_model(model_name):
+MODELS = {}
 
-    # --------------------------------------------------------
-    # Validate
-    # --------------------------------------------------------
 
-    if model_name not in AVAILABLE_MODELS:
+# ============================================================
+# CHECK CHECKPOINTS
+# ============================================================
 
-        raise ValueError(
-            f"Model '{model_name}' is not available. "
-            f"Available: {AVAILABLE_MODELS}"
-        )
-
-    # --------------------------------------------------------
-    # Return cached model if already loaded
-    # --------------------------------------------------------
-
-    if model_name in MODELS:
-
-        print(
-            f"✓ {model_name} already loaded"
-        )
-
-        return MODELS[model_name]
+def check_checkpoints():
 
     print()
     print("=" * 60)
-    print(f"Loading {model_name}")
+    print("CHECKING CHECKPOINTS")
     print("=" * 60)
 
-    # --------------------------------------------------------
-    # Get checkpoint
-    # --------------------------------------------------------
+    for model_name in AVAILABLE_MODELS:
 
-    checkpoint_path = get_checkpoint(
+        path = CHECKPOINTS[
+            model_name
+        ]
+
+        print(
+            f"Checking {model_name}: {path}"
+        )
+
+        if os.path.exists(path):
+
+            print(
+                f"✓ {model_name} checkpoint found"
+            )
+
+        else:
+
+            print(
+                f"✗ {model_name} checkpoint NOT FOUND"
+            )
+
+            raise FileNotFoundError(
+                f"Checkpoint not found for "
+                f"{model_name}: {path}"
+            )
+
+
+# ============================================================
+# LOAD ONE CHECKPOINT
+# ============================================================
+
+def load_checkpoint(
+    model,
+    model_name
+):
+
+    checkpoint_path = CHECKPOINTS[
         model_name
-    )
+    ]
 
     print(
-        f"Checkpoint: {checkpoint_path}"
+        f"Loading weights for {model_name}..."
     )
-
-    # --------------------------------------------------------
-    # Create model
-    # --------------------------------------------------------
-
-    model = create_model(
-        model_name
-    )
-
-    # --------------------------------------------------------
-    # Load checkpoint
-    # --------------------------------------------------------
-
-    print("Loading weights...")
 
     checkpoint = torch.load(
         checkpoint_path,
-        map_location=device,
-        weights_only=False
+        map_location=device
     )
 
     # --------------------------------------------------------
-    # Support both checkpoint formats
+    # Support different checkpoint formats
     # --------------------------------------------------------
 
-    if isinstance(checkpoint, dict):
+    if isinstance(
+        checkpoint,
+        dict
+    ):
 
         if "model_state_dict" in checkpoint:
 
@@ -263,74 +194,184 @@ def load_model(model_name):
 
         state_dict = checkpoint
 
+
+    # --------------------------------------------------------
+    # Remove DataParallel prefix if present
+    # --------------------------------------------------------
+
+    cleaned_state_dict = {}
+
+    for key, value in state_dict.items():
+
+        if key.startswith(
+            "module."
+        ):
+
+            key = key[
+                len("module.") :
+            ]
+
+        cleaned_state_dict[
+            key
+        ] = value
+
+
+    # --------------------------------------------------------
+    # Load weights
+    # --------------------------------------------------------
+
     model.load_state_dict(
-        state_dict
+        cleaned_state_dict,
+        strict=True
     )
 
-    model.eval()
 
     # --------------------------------------------------------
-    # Store
+    # Cleanup checkpoint memory
     # --------------------------------------------------------
 
-    MODELS[model_name] = model
-
-    # Delete checkpoint from RAM
     del checkpoint
     del state_dict
+    del cleaned_state_dict
 
-    gc.collect()
-
-    print(
-        f"✓ {model_name} loaded successfully"
-    )
-
-    print("=" * 60)
 
     return model
 
 
 # ============================================================
-# UNLOAD MODEL
+# LOAD ALL MODELS
 # ============================================================
 
-def unload_model(model):
+def load_models():
 
-    if model is None:
-        return
+    global MODELS
 
-    # Find model name
-    model_name = None
+    # --------------------------------------------------------
+    # Check files first
+    # --------------------------------------------------------
 
-    for name, loaded_model in list(
-        MODELS.items()
-    ):
+    check_checkpoints()
 
-        if loaded_model is model:
 
-            model_name = name
-            break
+    print()
+    print("=" * 60)
+    print("LOADING MODELS")
+    print("=" * 60)
 
-    # Remove from cache
-    if model_name is not None:
 
-        del MODELS[model_name]
+    # ========================================================
+    # UNET
+    # ========================================================
 
-        print(
-            f"✓ Removed {model_name} from memory"
-        )
+    print()
+    print("Loading UNet...")
 
-    # Delete reference
-    del model
+    unet = UNet().to(
+        device
+    )
 
-    # Python cleanup
-    gc.collect()
+    unet = load_checkpoint(
+        unet,
+        "unet"
+    )
 
-    # CUDA cleanup
-    if torch.cuda.is_available():
+    unet.eval()
 
-        torch.cuda.empty_cache()
+    MODELS[
+        "unet"
+    ] = unet
 
     print(
-        "✓ Memory cleanup complete"
+        "✓ UNet loaded"
     )
+
+
+    # ========================================================
+    # RESIDUAL UNET
+    # ========================================================
+
+    print()
+    print("Loading Residual UNet...")
+
+    residual_unet = (
+        ResidualUNet().to(
+            device
+        )
+    )
+
+    residual_unet = load_checkpoint(
+        residual_unet,
+        "residual_unet"
+    )
+
+    residual_unet.eval()
+
+    MODELS[
+        "residual_unet"
+    ] = residual_unet
+
+    print(
+        "✓ Residual UNet loaded"
+    )
+
+
+    # ========================================================
+    # UNET++
+    # ========================================================
+
+    print()
+    print("Loading UNet++...")
+
+    unetplusplus = (
+        UNetPlusPlus().to(
+            device
+        )
+    )
+
+    unetplusplus = load_checkpoint(
+        unetplusplus,
+        "unetplusplus"
+    )
+
+    unetplusplus.eval()
+
+    MODELS[
+        "unetplusplus"
+    ] = unetplusplus
+
+    print(
+        "✓ UNet++ loaded"
+    )
+
+
+    # ========================================================
+    # COMPLETE
+    # ========================================================
+
+    print()
+    print("=" * 60)
+    print("✓ ALL MODELS LOADED SUCCESSFULLY")
+    print("=" * 60)
+
+    print()
+    print("Available models:")
+
+    for model_name in MODELS:
+
+        print(
+            f"  ✓ {model_name}"
+        )
+
+    print()
+    print(
+        f"Device: {device}"
+    )
+
+    print("=" * 60)
+
+
+# ============================================================
+# LOAD ALL MODELS ON STARTUP
+# ============================================================
+
+load_models()

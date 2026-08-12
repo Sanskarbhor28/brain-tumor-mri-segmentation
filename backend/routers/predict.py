@@ -1,16 +1,14 @@
 import os
 import time
-import gc
 import torch
 
 from fastapi import APIRouter, UploadFile, File
 from fastapi.responses import JSONResponse
 
 from models.model_manager import (
-    load_model,
-    unload_model,
+    MODELS,
     device,
-    AVAILABLE_MODELS,
+    AVAILABLE_MODELS
 )
 
 from utils.preprocess import preprocess_image
@@ -35,6 +33,7 @@ router = APIRouter(
 UPLOAD_FOLDER = "uploads"
 OUTPUT_FOLDER = "outputs"
 
+
 os.makedirs(
     UPLOAD_FOLDER,
     exist_ok=True
@@ -47,16 +46,26 @@ os.makedirs(
 
 
 # ============================================================
-# MEMORY CLEANUP
+# MODEL STATUS
 # ============================================================
 
-def cleanup_memory():
+@router.get("/status")
+async def model_status():
 
-    gc.collect()
+    return {
+        "status": "success",
 
-    if torch.cuda.is_available():
+        "device":
+            str(device),
 
-        torch.cuda.empty_cache()
+        "available_models":
+            AVAILABLE_MODELS,
+
+        "loaded_models":
+            list(
+                MODELS.keys()
+            )
+    }
 
 
 # ============================================================
@@ -79,10 +88,15 @@ async def predict(
             status_code=400,
             content={
                 "status": "error",
-                "message": "Invalid model name.",
-                "available_models": AVAILABLE_MODELS
+
+                "message":
+                    "Invalid model name.",
+
+                "available_models":
+                    AVAILABLE_MODELS
             }
         )
+
 
     # --------------------------------------------------------
     # Save image
@@ -106,7 +120,28 @@ async def predict(
             await file.read()
         )
 
-    selected_model = None
+
+    # --------------------------------------------------------
+    # Get model
+    # --------------------------------------------------------
+
+    selected_model = MODELS.get(
+        model_name
+    )
+
+    if selected_model is None:
+
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+
+                "message":
+                    f"Model {model_name} "
+                    f"is not loaded."
+            }
+        )
+
 
     try:
 
@@ -118,23 +153,21 @@ async def predict(
             image_path
         ).to(device)
 
-        # ----------------------------------------------------
-        # Load ONLY requested model
-        # ----------------------------------------------------
-
-        selected_model = load_model(
-            model_name
-        )
 
         # ----------------------------------------------------
-        # Prediction
+        # Start timer
         # ----------------------------------------------------
 
         if device.type == "cuda":
 
             torch.cuda.synchronize()
 
-        start_time = time.time()
+        start_time = time.perf_counter()
+
+
+        # ----------------------------------------------------
+        # Prediction
+        # ----------------------------------------------------
 
         with torch.no_grad():
 
@@ -146,30 +179,77 @@ async def predict(
                 output
             )
 
+
         if device.type == "cuda":
 
             torch.cuda.synchronize()
 
+
         inference_time = (
-            time.time() - start_time
+            time.perf_counter()
+            - start_time
         ) * 1000
 
+
         # ----------------------------------------------------
-        # Move output to CPU
+        # Mask
         # ----------------------------------------------------
 
-        output = (
-            output
-            .detach()
-            .cpu()
+        mask = (
+            output > 0.5
+        ).float()
+
+
+        # ----------------------------------------------------
+        # Tumor percentage
+        # ----------------------------------------------------
+
+        tumor_pixels = (
+            mask.sum().item()
         )
+
+        total_pixels = (
+            mask.numel()
+        )
+
+        if total_pixels > 0:
+
+            tumor_percentage = (
+                tumor_pixels /
+                total_pixels
+            ) * 100
+
+        else:
+
+            tumor_percentage = 0.0
+
+
+        # ----------------------------------------------------
+        # Confidence
+        # ----------------------------------------------------
+
+        if tumor_pixels > 0:
+
+            confidence = (
+                output[
+                    mask.bool()
+                ]
+                .mean()
+                .item()
+            )
+
+        else:
+
+            confidence = 0.0
+
 
         # ----------------------------------------------------
         # Save mask
         # ----------------------------------------------------
 
         mask_name = (
-            f"{model_name}_{safe_filename}"
+            f"{model_name}_"
+            f"{safe_filename}"
         )
 
         mask_path = os.path.join(
@@ -182,12 +262,15 @@ async def predict(
             mask_path
         )
 
+
         # ----------------------------------------------------
         # Create overlay
         # ----------------------------------------------------
 
         overlay_name = (
-            f"overlay_{model_name}_{safe_filename}"
+            f"overlay_"
+            f"{model_name}_"
+            f"{safe_filename}"
         )
 
         overlay_path = os.path.join(
@@ -201,42 +284,6 @@ async def predict(
             overlay_path
         )
 
-        # ----------------------------------------------------
-        # Tumor percentage
-        # ----------------------------------------------------
-
-        mask = (
-            output > 0.5
-        ).float()
-
-        tumor_pixels = (
-            mask.sum().item()
-        )
-
-        total_pixels = (
-            mask.numel()
-        )
-
-        tumor_percentage = (
-            tumor_pixels /
-            total_pixels
-        ) * 100
-
-        # ----------------------------------------------------
-        # Confidence
-        # ----------------------------------------------------
-
-        if tumor_pixels > 0:
-
-            confidence = (
-                output[mask.bool()]
-                .mean()
-                .item()
-            )
-
-        else:
-
-            confidence = 0.0
 
         # ----------------------------------------------------
         # Response
@@ -244,66 +291,62 @@ async def predict(
 
         return JSONResponse(
             {
-                "status": "success",
+                "status":
+                    "success",
 
-                "model": model_name,
+                "model":
+                    model_name,
 
-                "filename": safe_filename,
+                "filename":
+                    safe_filename,
 
-                "mask_file": mask_name,
+                "mask_file":
+                    mask_name,
 
-                "overlay_file": overlay_name,
+                "overlay_file":
+                    overlay_name,
 
-                "tumor_percentage": round(
-                    tumor_percentage,
-                    2
-                ),
+                "tumor_percentage":
+                    round(
+                        tumor_percentage,
+                        2
+                    ),
 
-                "confidence": round(
-                    confidence,
-                    4
-                ),
+                "confidence":
+                    round(
+                        confidence,
+                        4
+                    ),
 
-                "inference_time_ms": round(
-                    inference_time,
-                    2
-                )
+                "inference_time_ms":
+                    round(
+                        inference_time,
+                        2
+                    )
             }
         )
+
 
     except Exception as e:
 
         print(
-            f"Prediction error: {e}"
+            "Prediction error:",
+            repr(e)
         )
 
         return JSONResponse(
             status_code=500,
             content={
                 "status": "error",
-                "message": str(e)
+
+                "message":
+                    str(e)
             }
         )
 
-    finally:
-
-        # ----------------------------------------------------
-        # CRITICAL FOR RENDER FREE
-        # ----------------------------------------------------
-
-        if selected_model is not None:
-
-            unload_model(
-                selected_model
-            )
-
-        selected_model = None
-
-        cleanup_memory()
-
 
 # ============================================================
-# MODEL COMPARISON
+# THREE MODEL COMPARISON
 # ============================================================
 
 @router.post("/compare")
@@ -312,12 +355,7 @@ async def compare_models(
 ):
 
     # --------------------------------------------------------
-    # On Render Free:
-    # AVAILABLE_MODELS = ["unetplusplus"]
-    #
-    # Locally:
-    # AVAILABLE_MODELS =
-    # ["unet", "residual_unet", "unetplusplus"]
+    # Save uploaded image
     # --------------------------------------------------------
 
     safe_filename = os.path.basename(
@@ -338,81 +376,172 @@ async def compare_models(
             await file.read()
         )
 
+
+    # --------------------------------------------------------
+    # Preprocess ONCE
+    # --------------------------------------------------------
+
     image = preprocess_image(
         image_path
     ).to(device)
 
+
     comparison_results = {}
 
+
     # ========================================================
-    # RUN MODELS ONE AT A TIME
+    # RUN ALL THREE MODELS
     # ========================================================
 
     for model_name in AVAILABLE_MODELS:
 
-        selected_model = None
+        print()
+        print(
+            f"Running {model_name}..."
+        )
+
+
+        # ----------------------------------------------------
+        # Get model
+        # ----------------------------------------------------
+
+        selected_model = MODELS.get(
+            model_name
+        )
+
+
+        if selected_model is None:
+
+            comparison_results[
+                model_name
+            ] = {
+
+                "status":
+                    "error",
+
+                "message":
+                    "Model not loaded"
+            }
+
+            continue
+
 
         try:
 
-            print()
-            print("=" * 60)
-            print(
-                f"Running model: {model_name}"
-            )
-            print("=" * 60)
-
             # ------------------------------------------------
-            # Load ONLY current model
-            # ------------------------------------------------
-
-            selected_model = load_model(
-                model_name
-            )
-
-            # ------------------------------------------------
-            # Prediction
+            # Synchronize GPU
             # ------------------------------------------------
 
             if device.type == "cuda":
 
                 torch.cuda.synchronize()
 
-            start_time = time.time()
+
+            # ------------------------------------------------
+            # Start timer
+            # ------------------------------------------------
+
+            start_time = (
+                time.perf_counter()
+            )
+
+
+            # ------------------------------------------------
+            # Prediction
+            # ------------------------------------------------
 
             with torch.no_grad():
 
-                output = selected_model(
-                    image
+                output = (
+                    selected_model(
+                        image
+                    )
                 )
 
                 output = torch.sigmoid(
                     output
                 )
 
+
+            # ------------------------------------------------
+            # Synchronize GPU
+            # ------------------------------------------------
+
             if device.type == "cuda":
 
                 torch.cuda.synchronize()
 
+
+            # ------------------------------------------------
+            # Inference time
+            # ------------------------------------------------
+
             inference_time = (
-                time.time() - start_time
+                time.perf_counter()
+                - start_time
             ) * 1000
 
+
             # ------------------------------------------------
-            # Move output to CPU
+            # Binary mask
             # ------------------------------------------------
 
-            output = (
-                output
-                .detach()
-                .cpu()
+            mask = (
+                output > 0.5
+            ).float()
+
+
+            # ------------------------------------------------
+            # Tumor area
+            # ------------------------------------------------
+
+            tumor_pixels = (
+                mask.sum().item()
             )
+
+            total_pixels = (
+                mask.numel()
+            )
+
+
+            if total_pixels > 0:
+
+                tumor_percentage = (
+                    tumor_pixels /
+                    total_pixels
+                ) * 100
+
+            else:
+
+                tumor_percentage = 0.0
+
+
+            # ------------------------------------------------
+            # Confidence
+            # ------------------------------------------------
+
+            if tumor_pixels > 0:
+
+                confidence = (
+                    output[
+                        mask.bool()
+                    ]
+                    .mean()
+                    .item()
+                )
+
+            else:
+
+                confidence = 0.0
+
 
             # ------------------------------------------------
             # Save mask
             # ------------------------------------------------
 
             mask_name = (
-                f"{model_name}_{safe_filename}"
+                f"{model_name}_"
+                f"{safe_filename}"
             )
 
             mask_path = os.path.join(
@@ -425,12 +554,15 @@ async def compare_models(
                 mask_path
             )
 
+
             # ------------------------------------------------
-            # Overlay
+            # Create overlay
             # ------------------------------------------------
 
             overlay_name = (
-                f"overlay_{model_name}_{safe_filename}"
+                f"overlay_"
+                f"{model_name}_"
+                f"{safe_filename}"
             )
 
             overlay_path = os.path.join(
@@ -444,42 +576,6 @@ async def compare_models(
                 overlay_path
             )
 
-            # ------------------------------------------------
-            # Tumor area
-            # ------------------------------------------------
-
-            mask = (
-                output > 0.5
-            ).float()
-
-            tumor_pixels = (
-                mask.sum().item()
-            )
-
-            total_pixels = (
-                mask.numel()
-            )
-
-            tumor_percentage = (
-                tumor_pixels /
-                total_pixels
-            ) * 100
-
-            # ------------------------------------------------
-            # Confidence
-            # ------------------------------------------------
-
-            if tumor_pixels > 0:
-
-                confidence = (
-                    output[mask.bool()]
-                    .mean()
-                    .item()
-                )
-
-            else:
-
-                confidence = 0.0
 
             # ------------------------------------------------
             # Store result
@@ -489,83 +585,90 @@ async def compare_models(
                 model_name
             ] = {
 
-                "status": "success",
+                "status":
+                    "success",
 
-                "model": model_name,
+                "model":
+                    model_name,
 
-                "mask_file": mask_name,
+                "mask_file":
+                    mask_name,
 
-                "overlay_file": overlay_name,
+                "overlay_file":
+                    overlay_name,
 
-                "tumor_percentage": round(
-                    tumor_percentage,
-                    2
-                ),
+                "tumor_percentage":
+                    round(
+                        tumor_percentage,
+                        2
+                    ),
 
-                "confidence": round(
-                    confidence,
-                    4
-                ),
+                "confidence":
+                    round(
+                        confidence,
+                        4
+                    ),
 
-                "inference_time_ms": round(
-                    inference_time,
-                    2
-                )
+                "inference_time_ms":
+                    round(
+                        inference_time,
+                        2
+                    )
             }
+
 
             print(
                 f"✓ {model_name} completed"
             )
 
+
         except Exception as e:
+
+            print(
+                f"✗ {model_name} failed:",
+                repr(e)
+            )
 
             comparison_results[
                 model_name
             ] = {
 
-                "status": "error",
+                "status":
+                    "error",
 
-                "model": model_name,
+                "model":
+                    model_name,
 
-                "message": str(e)
+                "message":
+                    str(e)
             }
 
-            print(
-                f"✗ {model_name} failed: {e}"
-            )
 
-        finally:
+    # --------------------------------------------------------
+    # Cleanup temporary image tensor
+    # --------------------------------------------------------
 
-            # ------------------------------------------------
-            # CRITICAL:
-            # Free model before next one
-            # ------------------------------------------------
+    del image
 
-            if selected_model is not None:
 
-                unload_model(
-                    selected_model
-                )
+    if device.type == "cuda":
 
-            selected_model = None
+        torch.cuda.synchronize()
 
-            cleanup_memory()
-
-            print(
-                f"✓ Memory cleaned after "
-                f"{model_name}"
-            )
 
     # ========================================================
-    # RETURN
+    # RETURN RESULTS
     # ========================================================
 
     return JSONResponse(
         {
-            "status": "success",
+            "status":
+                "success",
 
-            "filename": safe_filename,
+            "filename":
+                safe_filename,
 
-            "models": comparison_results
+            "models":
+                comparison_results
         }
     )
